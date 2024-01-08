@@ -130,6 +130,9 @@ class Board:
         self.player1_guesses: list[tuple[int, int]] = []
         self.player2_guesses: list[tuple[int, int]] = []
 
+        self.player1_shots: int = 0
+        self.player2_shots: int = 0
+
     def get_player_coords(self, player: Player) -> list[tuple[int, int]]:
         coords = []
         for ship in getattr(self, f"player{player.value}_ships"):
@@ -363,6 +366,13 @@ class Board:
                 getattr(self, f"player{player.value}_ships")[ship]["y"],
             ):
                 if (y, x) == coord:
+                    if (
+                        getattr(self, f"player{player.value}")[y][x]
+                        == ShipState.HIT.value
+                    ):
+                        raise InvalidGuessError(
+                            f"Player {player.value} has already guessed {coord} HIT"
+                        )
                     getattr(self, f"player{player.value}")[y][x] = ShipState.HIT.value
                     if all(
                         getattr(self, f"player{player.value}")[y][x]
@@ -388,7 +398,8 @@ class Board:
                             for ship in getattr(self, f"player{player.value}_ships")
                         ):
                             print(f"Player {player.value} wins!")
-                            exit(0)
+                            # exit(0)
+                            return
                     return
         getattr(self, f"player{player.value}")[coord[0]][
             coord[1]
@@ -430,6 +441,7 @@ class Board:
                     case "enter":
                         try:
                             self.change_state(Player.TWO, coord)
+                            self.player1_shots += 1
                             placed = True
                         except InvalidGuessError as e:
                             print(e)
@@ -439,27 +451,44 @@ class Board:
     def place_ai_guess(self) -> None:
         coord: tuple[int, int] = (0, 0)
         placed = False
+
+        def approach() -> tuple[int, int]:
+            # get a random adjacent coordinate
+            x, y = choice(self.ai_x)
+            coord = (x, y)
+            num_attempted = 0
+            while (
+                coord in self.all_ai_guesses
+                or coord[0] < 0
+                or coord[0] > 9
+                or coord[1] < 0
+                or coord[1] > 9
+            ):
+                if num_attempted > 10:
+                    # get a random coordinate
+                    coord = (randint(0, 9), randint(0, 9))
+                    break
+                which = choice([0, 1])
+                if which == 0:
+                    coord = (
+                        x + choice([-1, 1]),
+                        y,
+                    )
+                elif which == 1:
+                    coord = (
+                        x,
+                        y + choice([-1, 1]),
+                    )
+                num_attempted += 1
+            return coord
+
         while not placed:
             if not self.ai_x:
                 coord = (randint(0, 9), randint(0, 9))
             else:
                 print(f"{self.ai_x=}")
                 if len(self.ai_x) == 1:
-                    # get a random adjacent coordinate
-                    x, y = self.ai_x[0]
-                    coord = (x, y)
-                    while coord in self.all_ai_guesses or coord[0] < 0 or coord[0] > 9:
-                        which = choice([0, 1])
-                        if which == 0:
-                            coord = (
-                                x + choice([-1, 1]),
-                                y,
-                            )
-                        elif which == 1:
-                            coord = (
-                                x,
-                                y + choice([-1, 1]),
-                            )
+                    coord = approach()
 
                 else:
                     coords_in_v_line: list[tuple[int, int]] = []
@@ -473,32 +502,55 @@ class Board:
                     if len(coords_in_v_line) > 1:
                         # get the top or bottom coordinate of a random coordinate in the vertical line
                         coord = (-1, -1)
+                        num_attempted = 0
                         while (
-                            coord in self.all_ai_guesses or coord[0] < 0 or coord[0] > 9
+                            coord in self.all_ai_guesses
+                            or coord[0] < 0
+                            or coord[0] > 9
+                            or coord[1] < 0
+                            or coord[1] > 9
                         ):
+                            if num_attempted > 10:
+                                coord = approach()
                             x, y = choice(coords_in_v_line)
                             coord = (
                                 x,
                                 y + choice([-1, 1]),
                             )
+                            num_attempted += 1
                     elif len(coords_in_h_line) > 1:
                         # get the left or right coordinate of a random coordinate in the horizontal line
                         coord = (-1, -1)
+                        num_attempted = 0
                         while (
-                            coord in self.all_ai_guesses or coord[0] < 0 or coord[0] > 9
+                            coord in self.all_ai_guesses
+                            or coord[0] < 0
+                            or coord[0] > 9
+                            or coord[1] < 0
+                            or coord[1] > 9
                         ):
+                            if num_attempted > 10:
+                                coord = approach()
                             x, y = choice(coords_in_h_line)
                             coord = (
                                 x + choice([-1, 1]),
                                 y,
                             )
+                            num_attempted += 1
                     else:
                         # get a random adjacent coordinate
                         x, y = self.ai_x[0]
                         coord = (x, y)
+                        num_attempted = 0
                         while (
-                            coord in self.all_ai_guesses or coord[0] < 0 or coord[0] > 9
+                            coord in self.all_ai_guesses
+                            or coord[0] < 0
+                            or coord[0] > 9
+                            or coord[1] < 0
+                            or coord[1] > 9
                         ):
+                            if num_attempted > 10:
+                                coord = approach()
                             which = choice([0, 1])
                             if which == 0:
                                 coord = (
@@ -510,10 +562,12 @@ class Board:
                                     x,
                                     y + choice([-1, 1]),
                                 )
+                            num_attempted += 1
 
             try:
                 coord = (coord[1], coord[0])
                 self.change_state(Player.ONE, coord)
+                self.player2_shots += 1
                 print("Placed", coord)
                 placed = True
             except InvalidGuessError:
@@ -558,6 +612,10 @@ class Board:
             print(self.ai_x)
             print(self.player1_guesses)
             print(self.player2_guesses)
+
+        print(
+            f"Shots fired:\nPlayer 1 (human): {self.player1_shots}\nPlayer 2 (AI): {self.player2_shots}"
+        )
 
 
 board = Board()
