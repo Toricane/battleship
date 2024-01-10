@@ -244,7 +244,7 @@ class Board:
         guess: bool = False,
     ) -> None:
         if guess:
-            print(f"Player {player.value}'s guesses:")
+            print(f"Player {1 if player.value == 2 else 2}'s guesses:")
         else:
             print(f"Player {player.value}'s board:")
         cprint("  0 1 2 3 4 5 6 7 8 9", fg=Color.FG.lightblue)
@@ -356,7 +356,8 @@ class Board:
                             break
 
     def change_state(self, player: Player, coord: tuple[int, int]) -> None:
-        if coord in getattr(self, f"player{player.value}_guesses"):
+        print(getattr(self, f"player{player.value}_guesses"))
+        if coord in getattr(self, f"player{1 if player.value == 2 else 2}_guesses"):
             raise InvalidGuessError(
                 f"Player {player.value} has already guessed {coord}"
             )
@@ -366,12 +367,14 @@ class Board:
                 getattr(self, f"player{player.value}_ships")[ship]["y"],
             ):
                 if (y, x) == coord:
-                    if (
-                        getattr(self, f"player{player.value}")[y][x]
-                        == ShipState.HIT.value
+                    print(coord)
+                    if getattr(self, f"player{player.value}")[y][x] in (
+                        ShipState.HIT.value,
+                        ShipState.SUNK.value,
+                        ShipState.WRONG_GUESS.value,
                     ):
                         raise InvalidGuessError(
-                            f"Player {player.value} has already guessed {coord} HIT"
+                            f"Player {player.value} has already guessed {coord}"
                         )
                     getattr(self, f"player{player.value}")[y][x] = ShipState.HIT.value
                     if all(
@@ -405,18 +408,22 @@ class Board:
             coord[1]
         ] = ShipState.WRONG_GUESS.value
 
-    def place_player_guess(self) -> None:
+    def place_player_guess(self, player: Player, pvp: bool = False) -> None:
         coord: tuple[int, int] = (0, 0)
         placed = False
         while not placed:
             print("\n" * 20)
             cprint("Welcome to Battleship!", fg=Color.FG.yellow)
-            print("Your board:")
-            self.display(Player.ONE)
-            print(f"Player 1, place your guess:")
+            if not pvp:
+                print("Your board:")
+                self.display(player)
+            else:
+                print("Previous board:")
+                self.display(player, guess=True)
+            print(f"Player {player.value}, place your guess:")
             # self.display(Player.TWO)  # remove
             self.display(
-                Player.TWO,
+                Player.TWO if player == Player.ONE else Player.ONE,
                 [coord],
                 guess=True,
             )
@@ -440,13 +447,22 @@ class Board:
                         break
                     case "enter":
                         try:
-                            self.change_state(Player.TWO, coord)
-                            self.player1_shots += 1
+                            self.change_state(
+                                Player.TWO if player == Player.ONE else Player.ONE,
+                                coord,
+                            )
+                            if player == Player.ONE:
+                                self.player1_shots += 1
+                                self.player1_guesses.append(coord)
+                            elif player == Player.TWO:
+                                self.player2_shots += 1
+                                self.player2_guesses.append(coord)
+
                             placed = True
+                            break
                         except InvalidGuessError as e:
                             print(e)
                             continue
-                        break
 
     def place_ai_guess(self) -> None:
         coord: tuple[int, int] = (0, 0)
@@ -568,6 +584,7 @@ class Board:
                 coord = (coord[1], coord[0])
                 self.change_state(Player.ONE, coord)
                 self.player2_shots += 1
+                self.player2_guesses.append(coord)
                 print("Placed", coord)
                 placed = True
             except InvalidGuessError:
@@ -601,20 +618,38 @@ class Board:
                     continue
 
     def main(self):
-        self.place_player_ships(Player.ONE)
-        self.place_ai_ships()
-
         print("\n" * 20)
         cprint("Welcome to Battleship!", fg=Color.FG.yellow)
-        while not self.game_ended:
-            self.place_player_guess()
-            self.place_ai_guess()
-            print(self.ai_x)
-            print(self.player1_guesses)
-            print(self.player2_guesses)
+        while True:
+            try:
+                game_type = int(input("Enter 1 for PvP, 2 for PvAI: "))
+                if game_type not in (1, 2):
+                    raise ValueError
+                break
+            except ValueError:
+                print("Invalid input")
+                continue
+
+        if game_type == 1:
+            self.place_player_ships(Player.ONE)
+            self.place_player_ships(Player.TWO)
+            while not self.game_ended:
+                self.place_player_guess(Player.ONE, pvp=True)
+                self.place_player_guess(Player.TWO, pvp=True)
+                print(self.player1_guesses)
+                print(self.player2_guesses)
+        elif game_type == 2:
+            self.place_player_ships(Player.ONE)
+            self.place_ai_ships()
+            while not self.game_ended:
+                self.place_player_guess(Player.ONE)
+                self.place_ai_guess()
+                print(self.ai_x)
+                print(self.player1_guesses)
+                print(self.player2_guesses)
 
         print(
-            f"Shots fired:\nPlayer 1 (human): {self.player1_shots}\nPlayer 2 (AI): {self.player2_shots}"
+            f"Shots fired:\nPlayer 1{' (human)' if game_type == 2 else ''}: {self.player1_shots}\nPlayer 2{' (AI)' if game_type == 2 else ''}: {self.player2_shots}"
         )
 
 
