@@ -651,8 +651,16 @@ class Board:
             fg=Color.FG.yellow,
         )
 
+        cprint("Shots fired:", fg=Color.FG.lightblue)
+        print(f"Player 1{' (human)' if game_type == 2 else ''}: {self.player1_shots}")
+        print(f"Player 2{' (AI)' if game_type == 2 else ''}: {self.player2_shots}")
+
+        cprint("Accuracy:", fg=Color.FG.lightblue)
         print(
-            f"Shots fired:\nPlayer 1{' (human)' if game_type == 2 else ''}: {self.player1_shots}\nPlayer 2{' (AI)' if game_type == 2 else ''}: {self.player2_shots}"
+            f"Player 1{' (human)' if game_type == 2 else ''}: {self.player1_shots / 17 * 100}%"
+        )
+        print(
+            f"Player 2{' (AI)' if game_type == 2 else ''}: {self.player2_shots / 17 * 100}%"
         )
 
 
