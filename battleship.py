@@ -174,9 +174,11 @@ class Board:
     @property
     def game_ended(self) -> bool:
         return all(
-            getattr(self, f"player{player.value}_ships")[ship]["sunk"]
-            for player in Player
-            for ship in getattr(self, f"player{player.value}_ships")
+            getattr(self, f"player1_ships")[ship]["sunk"]
+            for ship in getattr(self, f"player1_ships")
+        ) or all(
+            getattr(self, f"player2_ships")[ship]["sunk"]
+            for ship in getattr(self, f"player2_ships")
         )
 
     def place_ship(
@@ -356,7 +358,6 @@ class Board:
                             break
 
     def change_state(self, player: Player, coord: tuple[int, int]) -> None:
-        print(getattr(self, f"player{player.value}_guesses"))
         if coord in getattr(self, f"player{1 if player.value == 2 else 2}_guesses"):
             raise InvalidGuessError(
                 f"Player {player.value} has already guessed {coord}"
@@ -367,7 +368,6 @@ class Board:
                 getattr(self, f"player{player.value}_ships")[ship]["y"],
             ):
                 if (y, x) == coord:
-                    print(coord)
                     if getattr(self, f"player{player.value}")[y][x] in (
                         ShipState.HIT.value,
                         ShipState.SUNK.value,
@@ -396,12 +396,7 @@ class Board:
                         getattr(self, f"player{player.value}_ships")[ship][
                             "sunk"
                         ] = True
-                        if all(
-                            getattr(self, f"player{player.value}_ships")[ship]["sunk"]
-                            for ship in getattr(self, f"player{player.value}_ships")
-                        ):
-                            print(f"Player {player.value} wins!")
-                            # exit(0)
+                        if self.game_ended:
                             return
                     return
         getattr(self, f"player{player.value}")[coord[0]][
@@ -502,7 +497,6 @@ class Board:
             if not self.ai_x:
                 coord = (randint(0, 9), randint(0, 9))
             else:
-                print(f"{self.ai_x=}")
                 if len(self.ai_x) == 1:
                     coord = approach()
 
@@ -585,7 +579,6 @@ class Board:
                 self.change_state(Player.ONE, coord)
                 self.player2_shots += 1
                 self.player2_guesses.append(coord)
-                print("Placed", coord)
                 placed = True
             except InvalidGuessError:
                 continue
@@ -633,20 +626,30 @@ class Board:
         if game_type == 1:
             self.place_player_ships(Player.ONE)
             self.place_player_ships(Player.TWO)
+            player = Player.ONE
             while not self.game_ended:
-                self.place_player_guess(Player.ONE, pvp=True)
-                self.place_player_guess(Player.TWO, pvp=True)
-                print(self.player1_guesses)
-                print(self.player2_guesses)
+                self.place_player_guess(player, pvp=True)
+                player = Player.TWO if player == Player.ONE else Player.ONE
         elif game_type == 2:
             self.place_player_ships(Player.ONE)
             self.place_ai_ships()
+            player = Player.ONE
             while not self.game_ended:
-                self.place_player_guess(Player.ONE)
-                self.place_ai_guess()
-                print(self.ai_x)
-                print(self.player1_guesses)
-                print(self.player2_guesses)
+                if player == Player.ONE:
+                    self.place_player_guess(player)
+                else:
+                    self.place_ai_guess()
+                player = Player.TWO if player == Player.ONE else Player.ONE
+
+        print("\n" * 20)
+        cprint("Welcome to Battleship!", fg=Color.FG.yellow)
+        player = Player.ONE if player == Player.TWO else Player.TWO
+        self.display(player)
+        self.display(Player.TWO if player == Player.ONE else Player.ONE)
+        cprint(
+            f"Player {player.value}{' (human)' if game_type == 2 else ''} won!",
+            fg=Color.FG.yellow,
+        )
 
         print(
             f"Shots fired:\nPlayer 1{' (human)' if game_type == 2 else ''}: {self.player1_shots}\nPlayer 2{' (AI)' if game_type == 2 else ''}: {self.player2_shots}"
