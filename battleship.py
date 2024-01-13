@@ -1,22 +1,13 @@
 from enum import Enum
-from pprint import pprint
-from typing import Any
-import keyboard
-from time import sleep
-from os import system
-from random import randint, choice
+from keyboard import read_key
+from os import system, name
+from random import choice, randint
+from time import sleep, time
+from typing import Any, Callable
 
 
 # Colors
 class Color:
-
-    """Colors class:reset all colors with colors.reset; two
-    sub classes fg for foreground
-    and bg for background; use as colors.subclass.colorname.
-    i.e. colors.fg.red or colors.bg.greenalso, the generic bold, disable,
-    underline, reverse, strike through,
-    and invisible work with the main class i.e. colors.bold"""
-
     reset = "\033[0m"
     bold = "\033[01m"
     disable = "\033[02m"
@@ -55,6 +46,29 @@ class Color:
 
 def cprint(text: str, fg: Color.FG | str = "", bg: Color.BG | str = "") -> None:
     print(f"{fg}{bg}{text}{Color.reset}" if fg or bg else text)
+
+
+def clear() -> None:
+    try:
+        system("cls" if name == "nt" else "clear")
+    except Exception:
+        print("\n" * 30)
+
+
+def run_gracefully(func: Callable[..., Any]) -> Callable[..., Any]:
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return func(*args, **kwargs)
+        except KeyboardInterrupt:
+            cprint("\n\nThank you for playing battleship!", fg=Color.FG.yellow)
+            print("Press Ctrl+C to exit")
+            try:
+                while True:
+                    sleep(1)
+            except KeyboardInterrupt:
+                return
+
+    return wrapper
 
 
 # Enums
@@ -133,6 +147,16 @@ class Board:
         self.player1_shots: int = 0
         self.player2_shots: int = 0
 
+        self.player1_last_shot: tuple[int, int] = (0, 0)
+        self.player2_last_shot: tuple[int, int] = (0, 0)
+
+        self.key_cooldown: dict[str, float] = {}
+        self.update: ShipState | None = None
+        self.last_placed_ship: tuple[Direction, tuple[int, int]] = (
+            Direction.HORIZONTAL,
+            (0, 0),
+        )
+
     def get_player_coords(self, player: Player) -> list[tuple[int, int]]:
         coords = []
         for ship in getattr(self, f"player{player.value}_ships"):
@@ -159,6 +183,15 @@ class Board:
             for x in range(10)
             for y in range(10)
             if self.player1[y][x] == ShipState.HIT.value
+        ]
+
+    @property
+    def ai_misses(self) -> list[tuple[int, int]]:
+        return [
+            (x, y)
+            for x in range(10)
+            for y in range(10)
+            if self.player1[y][x] == ShipState.WRONG_GUESS.value
         ]
 
     @property
@@ -282,6 +315,21 @@ class Board:
                         columns += f"{Color.FG.cyan}{prefix}•{Color.reset} "
             print(f"{Color.FG.lightblue}{i}{Color.reset} {columns}")
 
+    def get_key(self, cooldown_duration: float = 0.2) -> str:
+        while True:
+            key = read_key()
+            if isinstance(key, str):
+                key = key.lower()
+            if key not in ("w", "a", "s", "d", "enter", "v", "h"):
+                continue
+            current_time = time()
+            if (
+                key not in self.key_cooldown
+                or (current_time - self.key_cooldown[key]) > cooldown_duration
+            ):
+                self.key_cooldown[key] = current_time
+                return key
+
     def place_player_ships(self, player: Player) -> None:
         direction = Direction.HORIZONTAL
 
@@ -293,12 +341,11 @@ class Board:
             return min_x, max_x, min_y, max_y
 
         for ship, value in ship_names.items():
-            direction = Direction.HORIZONTAL
-            leftmost: tuple[int, int] = (0, 0)
+            direction, leftmost = self.last_placed_ship
             min_x, max_x, min_y, max_y = min_max_x_y(direction, value)
             placed = False
             while not placed:
-                print("\n" * 20)
+                clear()
                 cprint("Welcome to Battleship!", fg=Color.FG.yellow)
                 print(f"Player {int(player.value)}, place your ships:")
                 print(f"Place your {ship} ({value.value} spaces)")
@@ -309,10 +356,7 @@ class Board:
                     else [(leftmost[0] + i, leftmost[1]) for i in range(value.value)],
                 )
                 while True:
-                    sleep(0.2)
-                    key = keyboard.read_key()
-                    if isinstance(key, str):
-                        key = key.lower()
+                    key = self.get_key()
                     match key:
                         case "v":
                             direction = Direction.VERTICAL
@@ -356,11 +400,14 @@ class Board:
                                 print(e)
                                 continue
                             break
+                self.last_placed_ship = (direction, leftmost)
+            if value == Ship.DESTROYER:
+                self.last_placed_ship = (Direction.HORIZONTAL, (0, 0))
 
-    def change_state(self, player: Player, coord: tuple[int, int]) -> None:
+    def change_state(self, player: Player, coord: tuple[int, int]) -> ShipState | None:
         if coord in getattr(self, f"player{1 if player.value == 2 else 2}_guesses"):
             raise InvalidGuessError(
-                f"Player {player.value} has already guessed {coord}"
+                f"Player {2 if player.value == 1 else 1} has already guessed {coord}"
             )
         for ship in getattr(self, f"player{player.value}_ships"):
             for x, y in zip(
@@ -374,7 +421,7 @@ class Board:
                         ShipState.WRONG_GUESS.value,
                     ):
                         raise InvalidGuessError(
-                            f"Player {player.value} has already guessed {coord}"
+                            f"Player {2 if player.value == 1 else 1} has already guessed {coord}"
                         )
                     getattr(self, f"player{player.value}")[y][x] = ShipState.HIT.value
                     if all(
@@ -398,16 +445,18 @@ class Board:
                         ] = True
                         if self.game_ended:
                             return
-                    return
+                        return ShipState.SUNK
+                    return ShipState.HIT
         getattr(self, f"player{player.value}")[coord[0]][
             coord[1]
         ] = ShipState.WRONG_GUESS.value
+        return ShipState.WRONG_GUESS
 
     def place_player_guess(self, player: Player, pvp: bool = False) -> None:
-        coord: tuple[int, int] = (0, 0)
+        coord: tuple[int, int] = getattr(self, f"player{player.value}_last_shot")
         placed = False
         while not placed:
-            print("\n" * 20)
+            clear()
             cprint("Welcome to Battleship!", fg=Color.FG.yellow)
             if not pvp:
                 print("Your board:")
@@ -416,17 +465,30 @@ class Board:
                 print("Previous board:")
                 self.display(player, guess=True)
             print(f"Player {player.value}, place your guess:")
-            # self.display(Player.TWO)  # remove
             self.display(
                 Player.TWO if player == Player.ONE else Player.ONE,
                 [coord],
                 guess=True,
             )
+            if self.update:
+                if pvp:
+                    other_player = Player.TWO if player == Player.ONE else Player.ONE
+                else:
+                    other_player = player
+                if self.update == ShipState.SUNK:
+                    print(
+                        f"Player {other_player.value} {Color.FG.red}sunk{Color.reset} a ship!"
+                    )
+                elif self.update == ShipState.HIT:
+                    print(
+                        f"Player {other_player.value} {Color.FG.lightred}hit{Color.reset} a ship!"
+                    )
+                elif self.update == ShipState.WRONG_GUESS:
+                    print(
+                        f"Player {other_player.value} {Color.FG.cyan}missed{Color.reset}!"
+                    )
             while True:
-                sleep(0.2)
-                key = keyboard.read_key()
-                if isinstance(key, str):
-                    key = key.lower()
+                key = self.get_key()
                 match key:
                     case "w":
                         coord = (max(0, coord[0] - 1), coord[1])
@@ -442,7 +504,7 @@ class Board:
                         break
                     case "enter":
                         try:
-                            self.change_state(
+                            self.update = self.change_state(
                                 Player.TWO if player == Player.ONE else Player.ONE,
                                 coord,
                             )
@@ -453,6 +515,11 @@ class Board:
                                 self.player2_shots += 1
                                 self.player2_guesses.append(coord)
 
+                            if player == Player.ONE:
+                                self.player1_last_shot = coord
+                            elif player == Player.TWO:
+                                self.player2_last_shot = coord
+
                             placed = True
                             break
                         except InvalidGuessError as e:
@@ -462,6 +529,22 @@ class Board:
     def place_ai_guess(self) -> None:
         coord: tuple[int, int] = (0, 0)
         placed = False
+
+        def random_coord() -> tuple[int, int]:
+            coord = (randint(0, 9), randint(0, 9))
+            num_attempted = 1
+            while (
+                any(
+                    abs(coord[0] - x) == 1
+                    and abs(coord[1] - y) == 0
+                    or abs(coord[0] - x) == 0
+                    and abs(coord[1] - y) == 1
+                    for x, y in self.ai_misses
+                )
+                and num_attempted <= 10
+            ):
+                coord = (randint(0, 9), randint(0, 9))
+            return coord
 
         def approach() -> tuple[int, int]:
             # get a random adjacent coordinate
@@ -477,7 +560,7 @@ class Board:
             ):
                 if num_attempted > 10:
                     # get a random coordinate
-                    coord = (randint(0, 9), randint(0, 9))
+                    coord = random_coord()
                     break
                 which = choice([0, 1])
                 if which == 0:
@@ -495,7 +578,7 @@ class Board:
 
         while not placed:
             if not self.ai_x:
-                coord = (randint(0, 9), randint(0, 9))
+                coord = random_coord()
             else:
                 if len(self.ai_x) == 1:
                     coord = approach()
@@ -610,8 +693,9 @@ class Board:
                 except InvalidShipPlacementError:
                     continue
 
-    def main(self):
-        print("\n" * 20)
+    @run_gracefully
+    def main(self) -> None:
+        clear()
         cprint("Welcome to Battleship!", fg=Color.FG.yellow)
         while True:
             try:
@@ -622,6 +706,8 @@ class Board:
             except ValueError:
                 print("Invalid input")
                 continue
+
+        self.key_cooldown["enter"] = time()
 
         if game_type == 1:
             self.place_player_ships(Player.ONE)
@@ -641,7 +727,7 @@ class Board:
                     self.place_ai_guess()
                 player = Player.TWO if player == Player.ONE else Player.ONE
 
-        print("\n" * 20)
+        clear()
         cprint("Welcome to Battleship!", fg=Color.FG.yellow)
         player = Player.ONE if player == Player.TWO else Player.TWO
         self.display(player)
@@ -657,11 +743,12 @@ class Board:
 
         cprint("Accuracy:", fg=Color.FG.lightblue)
         print(
-            f"Player 1{' (human)' if game_type == 2 else ''}: {self.player1_shots / 17 * 100}%"
+            f"Player 1{' (human)' if game_type == 2 else ''}: {17 / self.player1_shots * 100:.1f}%"
         )
         print(
-            f"Player 2{' (AI)' if game_type == 2 else ''}: {self.player2_shots / 17 * 100}%"
+            f"Player 2{' (AI)' if game_type == 2 else ''}: {17 / self.player2_shots * 100:.1f}%"
         )
+        raise KeyboardInterrupt
 
 
 board = Board()
