@@ -1,6 +1,5 @@
 from enum import Enum
 from keyboard import read_key
-from os import system, name
 from random import choice, randint
 from time import sleep, time
 from typing import Any, Callable
@@ -44,15 +43,16 @@ class Color:
         lightgrey = "\033[47m"
 
 
+def ctext(text: str, fg: Color.FG | str = "", bg: Color.BG | str = "") -> str:
+    return f"{fg}{bg}{text}{Color.reset}" if fg or bg else text
+
+
 def cprint(text: str, fg: Color.FG | str = "", bg: Color.BG | str = "") -> None:
-    print(f"{fg}{bg}{text}{Color.reset}" if fg or bg else text)
+    print(ctext(text, fg, bg))
 
 
 def clear() -> None:
-    try:
-        system("cls" if name == "nt" else "clear")
-    except Exception:
-        print("\n" * 30)
+    print("\n" * 30)
 
 
 def run_gracefully(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -84,7 +84,7 @@ class Ship(Enum):
     SUBMARINE = 3
     DESTROYER = 2
 
-    def __getattribute__(self, __name: str) -> Any:
+    def __getattribute__(self, __name: str) -> int:
         if __name == "SUBMARINE":
             return 3
         return super().__getattribute__(__name)
@@ -118,6 +118,11 @@ class ShipState(Enum):
     HIT = 2
     SUNK = 3
     WRONG_GUESS = 4
+
+
+class GameType(Enum):
+    PVP = 1
+    PVAI = 2
 
 
 # Errors
@@ -214,6 +219,15 @@ class Board:
             for ship in getattr(self, f"player2_ships")
         )
 
+    def get_player_down(self, player: Player) -> list[tuple[int, int]]:
+        return [
+            (x, y)
+            for x in range(10)
+            for y in range(10)
+            if getattr(self, f"player{1 if player.value == 2 else 2}")[y][x]
+            in (ShipState.HIT.value, ShipState.SUNK.value)
+        ]
+
     def place_ship(
         self, player: Player, ship: str, x: int, y: int, direction: Direction
     ) -> None:
@@ -278,11 +292,12 @@ class Board:
         coord_range: list[tuple[int, int]] | None = None,
         guess: bool = False,
     ) -> None:
+        text: list[str] = []
         if guess:
-            print(f"Player {1 if player.value == 2 else 2}'s guesses:")
+            text.append(f"Player {1 if player.value == 2 else 2}'s guesses:")
         else:
-            print(f"Player {player.value}'s board:")
-        cprint("  0 1 2 3 4 5 6 7 8 9", fg=Color.FG.lightblue)
+            text.append(f"Player {player.value}'s board:")
+        text.append(ctext("  0 1 2 3 4 5 6 7 8 9", fg=Color.FG.lightblue))
         for i, row in enumerate(getattr(self, f"player{player.value}")):
             columns = ""
             for j, col in enumerate(row):
@@ -313,7 +328,8 @@ class Board:
                         columns += f"{Color.FG.red}{prefix}S{Color.reset} "
                     elif col == ShipState.WRONG_GUESS.value:
                         columns += f"{Color.FG.cyan}{prefix}•{Color.reset} "
-            print(f"{Color.FG.lightblue}{i}{Color.reset} {columns}")
+            text.append(f"{Color.FG.lightblue}{i}{Color.reset} {columns}")
+        print("\n".join(text))
 
     def get_key(self, cooldown_duration: float = 0.2) -> str:
         while True:
@@ -699,9 +715,13 @@ class Board:
         cprint("Welcome to Battleship!", fg=Color.FG.yellow)
         while True:
             try:
-                game_type = int(input("Enter 1 for PvP, 2 for PvAI: "))
-                if game_type not in (1, 2):
+                game_type = input("Enter 1 for PvP, 2 for PvAI: ")
+                if game_type not in ("1", "2"):
                     raise ValueError
+                if game_type == "1":
+                    game_type = GameType.PVP
+                elif game_type == "2":
+                    game_type = GameType.PVAI
                 break
             except ValueError:
                 print("Invalid input")
@@ -709,14 +729,14 @@ class Board:
 
         self.key_cooldown["enter"] = time()
 
-        if game_type == 1:
+        if game_type == GameType.PVP:
             self.place_player_ships(Player.ONE)
             self.place_player_ships(Player.TWO)
             player = Player.ONE
             while not self.game_ended:
                 self.place_player_guess(player, pvp=True)
                 player = Player.TWO if player == Player.ONE else Player.ONE
-        elif game_type == 2:
+        elif game_type == GameType.PVAI:
             self.place_player_ships(Player.ONE)
             self.place_ai_ships()
             player = Player.ONE
@@ -733,20 +753,24 @@ class Board:
         self.display(player)
         self.display(Player.TWO if player == Player.ONE else Player.ONE)
         cprint(
-            f"Player {player.value}{' (human)' if game_type == 2 else ''} won!",
+            f"Player {player.value}{(' (human)' if player == Player.ONE else ' (AI)') if game_type == GameType.PVAI else ''} won!",
             fg=Color.FG.yellow,
         )
 
         cprint("Shots fired:", fg=Color.FG.lightblue)
-        print(f"Player 1{' (human)' if game_type == 2 else ''}: {self.player1_shots}")
-        print(f"Player 2{' (AI)' if game_type == 2 else ''}: {self.player2_shots}")
+        print(
+            f"Player 1{' (human)' if game_type == GameType.PVAI else ''}: {self.player1_shots}"
+        )
+        print(
+            f"Player 2{' (AI)' if game_type == GameType.PVAI else ''}: {self.player2_shots}"
+        )
 
         cprint("Accuracy:", fg=Color.FG.lightblue)
         print(
-            f"Player 1{' (human)' if game_type == 2 else ''}: {17 / self.player1_shots * 100:.1f}%"
+            f"Player 1{' (human)' if game_type == GameType.PVAI else ''}: {len(self.get_player_down(Player.ONE)) / self.player1_shots * 100:.1f}%"
         )
         print(
-            f"Player 2{' (AI)' if game_type == 2 else ''}: {17 / self.player2_shots * 100:.1f}%"
+            f"Player 2{' (AI)' if game_type == GameType.PVAI else ''}: {len(self.get_player_down(Player.TWO)) / self.player2_shots * 100:.1f}%"
         )
         raise KeyboardInterrupt
 
